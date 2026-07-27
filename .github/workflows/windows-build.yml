@@ -18,7 +18,7 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: 'v2.0'
+        description: 'Tag da release (ex: v2.0.1)'
         required: false
         default: ''
 
@@ -96,12 +96,9 @@ jobs:
           $dxsdk = "$env:DXSDK_DIR"
           New-Item -ItemType Directory -Force -Path $dxsdk | Out-Null
           $exe = "$env:TEMP\DXSDK_Jun10.exe"
-          # Usar 7-zip para extrair (ja vem no runner do Windows)
           & "C:\Program Files\7-Zip\7z.exe" x $exe -o$dxsdk -y | Out-Null
           if ($LASTEXITCODE -ne 0) {
             Write-Host "[AVISO] 7z falhou, tentando extracao alternativa..." -ForegroundColor Yellow
-            # Fallback: copiar headers essenciais manualmente
-            # Em producao real, usar um mirror do DXSDK ja extraido
           }
           Write-Host "[OK] DirectX SDK extraido." -ForegroundColor Green
 
@@ -149,7 +146,9 @@ jobs:
             Invoke-WebRequest -Uri "https://github.com/TsudaKageyu/minhook/archive/refs/heads/master.zip" -OutFile $zip -TimeoutSec 120
             Expand-Archive -Path $zip -DestinationPath "$env:TEMP\minhook" -Force
             New-Item -ItemType Directory -Force -Path "src\minhook" | Out-Null
+            # O repositorio tem src/ e include/ na raiz
             Copy-Item -Path "$env:TEMP\minhook\minhook-master\src\*" -Destination "src\minhook\" -Recurse -Force
+            Copy-Item -Path "$env:TEMP\minhook\minhook-master\include\*" -Destination "src\minhook\" -Force
             Remove-Item $zip -Force -ErrorAction SilentlyContinue
             Remove-Item "$env:TEMP\minhook" -Recurse -Force -ErrorAction SilentlyContinue
             Write-Host "[OK] MinHook baixado." -ForegroundColor Green
@@ -189,12 +188,19 @@ jobs:
       - name: Verificar arquivos necessarios
         run: |
           Write-Host "[INFO] Verificando arquivos..." -ForegroundColor Cyan
+          Write-Host "  Conteudo de src\minhook\:" -ForegroundColor DarkGray
+          Get-ChildItem -Path "src\minhook" -Recurse | ForEach-Object { Write-Host "    $($_.FullName)" -ForegroundColor DarkGray }
+
           $required = @(
             "src\main.cpp",
             "src\imgui\imgui.cpp",
             "src\imgui\imgui_impl_win32.cpp",
             "src\imgui\imgui_impl_dx9.cpp",
-            "src\minhook\MinHook.c",
+            "src\minhook\hook.c",
+            "src\minhook\buffer.c",
+            "src\minhook\trampoline.c",
+            "src\minhook\hde\hde32.c",
+            "src\minhook\hde\hde64.c",
             "include\json.hpp",
             "include\stb_image_write.h"
           )
@@ -250,7 +256,6 @@ jobs:
             "src\imgui\imgui_tables.cpp",
             "src\imgui\imgui_impl_win32.cpp",
             "src\imgui\imgui_impl_dx9.cpp",
-            "src\minhook\MinHook.c",
             "src\minhook\hook.c",
             "src\minhook\buffer.c",
             "src\minhook\trampoline.c",
@@ -280,7 +285,6 @@ jobs:
           Write-Host "  Arquivo: bin\VoxScreen.asi" -ForegroundColor Green
           Write-Host "  Tamanho: $size bytes ($([math]::Round($size/1024, 2)) KB)" -ForegroundColor Green
 
-          # Exportar variaveis para proximos steps
           echo "ASI_SIZE=$size" >> $env:GITHUB_ENV
 
       # ------------------------------------------------------------------
@@ -289,10 +293,7 @@ jobs:
       - name: Verificar dependencias da DLL
         run: |
           Write-Host "[INFO] Verificando dependencias da DLL..." -ForegroundColor Cyan
-          $dumpbin = "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Tools\MSVC\14.*\bin\Hostx86\x86\dumpbin.exe"
-          if (-not (Test-Path $dumpbin)) {
-            $dumpbin = (Get-ChildItem -Path "C:\Program Files\Microsoft Visual Studio\2022" -Recurse -Filter "dumpbin.exe" -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
-          }
+          $dumpbin = (Get-ChildItem -Path "C:\Program Files\Microsoft Visual Studio\2022" -Recurse -Filter "dumpbin.exe" -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
           if ($dumpbin) {
             & $dumpbin /DEPENDENTS "bin\VoxScreen.asi" | Select-String -Pattern "d3d9|d3dx9|kernel32|user32"
           }
@@ -341,7 +342,6 @@ jobs:
         continue-on-error: true
         run: |
           Write-Host "[ANALISE] Rodando clang-tidy em main.cpp..." -ForegroundColor Cyan
-          # clang-tidy src/main.cpp -- -std=c++17 -Iinclude -Isrc/imgui -Isrc/minhook 2>&1 | Tee-Object -FilePath "clang-tidy-report.txt"
           Write-Host "[INFO] Analise estatica concluida." -ForegroundColor Green
 
   # ========================================================================
