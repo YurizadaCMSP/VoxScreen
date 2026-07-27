@@ -1,2 +1,66 @@
-ç
+name: Windows build
 
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: ${{ github.workspace }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Chocolatey (if missing)
+        shell: powershell
+        run: |
+          if (-not (Get-Command choco -ErrorAction SilentlyContinue)) {
+            Set-ExecutionPolicy Bypass -Scope Process -Force
+            iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
+          } else { Write-Host "choco already installed" }
+
+      - name: Try install DirectX SDK via Chocolatey
+        shell: powershell
+        run: |
+          choco install directx-sdk -y || choco install directx -y || Write-Host "Chocolatey DirectX install attempts failed, proceeding to manual install step"
+
+      - name: Run installer fallback (attempt DirectX SDK June 2010)
+        if: always()
+        shell: powershell
+        run: |
+          $installerUrl = 'https://download.microsoft.com/download/1/1/5/1157D0EE-1EB5-4F94-8C5F-9EA7C3C96A7E/DXSDK_Jun10.exe'
+          $local = "$env:TEMP\DXSDK_Jun10.exe"
+          try {
+            Invoke-WebRequest -Uri $installerUrl -OutFile $local -UseBasicParsing -ErrorAction Stop
+            Write-Host "Downloaded DXSDK installer to $local"
+            # Try silent install. The installer supports /Q for quiet mode.
+            Start-Process -FilePath $local -ArgumentList '/Q' -Wait -NoNewWindow
+          } catch {
+            Write-Warning "DXSDK download or install failed: $_"
+            Write-Warning "If your build needs d3dx9 you must provide the DirectX SDK on the runner or adjust the project to use Windows SDK alternatives."
+          }
+
+      - name: Configure CMake
+        shell: powershell
+        run: |
+          mkdir build
+          cmake -S . -B build -G "Visual Studio 17 2022" -A Win32 -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build with CMake
+        shell: powershell
+        run: |
+          cmake --build build --config Release --target VoxScreen
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: VoxScreen-artifacts
+          path: |
+            build/Release/VoxScreen.asi
+            bin/**
